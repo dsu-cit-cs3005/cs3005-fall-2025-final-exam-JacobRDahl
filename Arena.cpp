@@ -451,6 +451,76 @@ void Arena::run() {
 
         if (check_winner(winner)) {
             std::cout << "Winner: R" << robots[winner].glyph
+                      << " at (" << robots[winner].row << "," << robots[winner].col << ")"
+                      << " Name: " << robots[winner].name << "\n";
+            break;
+        }
+
+        for (size_t i = 0; i < robots.size(); ++i) {
+            auto& e = robots[i];
+            if (!e.alive || e.instance == nullptr) continue;
+
+            int radarDir = 0;
+            e.instance->get_radar_direction(radarDir);
+            auto scan = perform_radar(static_cast<int>(i), radarDir);
+            e.instance->process_radar_results(scan);
+
+            int shotRow = 0, shotCol = 0;
+            if (e.instance->get_shot_location(shotRow, shotCol)) {
+                handle_shot(static_cast<int>(i), shotRow, shotCol);
+            } else {
+                int moveDir = 0, steps = 0;
+                e.instance->get_move_direction(moveDir, steps);
+                if (moveDir != 0 && steps > 0) {
+                    handle_move(static_cast<int>(i), moveDir, steps);
+                }
+            }
+
+            if (cfg.liveView) {
+                print_state();
+                std::this_thread::sleep_for(std::chrono::milliseconds(600));
+            }
+        }
+    }
+
+    // If no winner after all rounds → draw
+    if (winner == -1) {
+        std::cout << "The battle ended in a draw after "
+                  << cfg.maxRounds << " rounds.\n";
+        std::cout << "Robots still standing:\n";
+        for (size_t i = 0; i < robots.size(); ++i) {
+            const auto& e = robots[i];
+            if (e.alive && e.instance != nullptr) {
+                std::cout << "  R" << e.glyph
+                          << " (" << e.row << "," << e.col << ") "
+                          << "Name: " << e.name
+                          << " Health: " << e.instance->get_health()
+                          << " Armor: " << e.instance->get_armor()
+                          << "\n";
+            }
+        }
+    }
+
+    // Cleanup loaded shared libs
+    for (size_t i = 0; i < robots.size(); ++i) {
+        robots[i].instance.reset();
+    }
+    for (void* h : dl_handles) {
+        if (h) dlclose(h);
+    }
+}
+
+/*void Arena::run() {
+    place_obstacles();
+    place_robots_randomly();
+
+    int winner = -1;
+    for (int round = 1; round <= cfg.maxRounds; ++round) {
+        print_round_header(round);
+        print_state();
+
+        if (check_winner(winner)) {
+            std::cout << "Winner: R" << robots[winner].glyph
                       << " at (" << robots[winner].row << "," << robots[winner].col << ")\n";
                       
             break;
@@ -496,4 +566,4 @@ void Arena::run() {
     for (void* h : dl_handles) {
         if (h) dlclose(h);
     }
-}
+}*/
