@@ -326,6 +326,7 @@ void Arena::run() {
             }
         }
     }
+    
 
     // Cleanup loaded shared libs
     for (void* h : dl_handles) {
