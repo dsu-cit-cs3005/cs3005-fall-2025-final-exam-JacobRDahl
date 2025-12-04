@@ -59,8 +59,16 @@ bool Arena::load_robots_from_sources(const std::string& directory) {
         rb->set_boundaries(cfg.height, cfg.width);
 
         char g = next_glyph();
-        int idx = robots.add(std::move(rb), g);
-        std::cout << "Robot added at index " << idx << "\n";
+
+        // Derive name from filename stem
+        std::string stem = p.path().stem().string();   // e.g. "Robot_TuNe"
+        if (stem.rfind("Robot_", 0) == 0) {
+            stem = stem.substr(6); // strip "Robot_"
+        }
+
+
+        int idx = robots.add(std::move(rb), g, stem);
+        std::cout << "Robot added at index " << idx <<  " with name " << stem << "\n";
 
         anyLoaded = true;
     }
@@ -103,18 +111,72 @@ void Arena::print_round_header(int round) {
 }
 
 
-void Arena::print_state() {
+/*void Arena::print_state() {
     std::cout << board.render() << "\n";
+
     for (size_t i = 0; i < robots.size(); ++i) {
-        //RobotBase* r = e.instance.get();
         auto& e = robots[i];
+        RobotBase* r = e.instance.get();
+
+        // Guard against null instance
+        if (!r) {
+            std::cout << "R" << e.glyph << " (" << e.row << "," << e.col << ") "
+                      << "Name: " << e.name << " - instance missing\n";
+            continue;
+        }
+
         std::cout << "R" << e.glyph << " (" << e.row << "," << e.col << ") "
-                  << "Name: " << e.instance->m_name << ' '
-                  << "Health: " << e.instance->get_health()
-                  << " Armor: " << e.instance->get_armor()
+                  << "Name: " << e.name << ' '   // use Arena-side name
+                  << "Health: " << r->get_health()
+                  << " Armor: " << r->get_armor()
                   << (e.alive ? "" : " - is out")
                   << "\n";
+
+        // Optional: print logs if you’ve populated them
+        if (e.alive) {
+            if (!e.lastRadarLog.empty())
+                std::cout << "  " << e.lastRadarLog << "\n";
+            if (!e.lastShotLog.empty())
+                std::cout << "  " << e.lastShotLog << "\n";
+            if (!e.lastMoveLog.empty())
+                std::cout << "  " << e.lastMoveLog << "\n";
+            std::cout << "\n";
+        }
     }
+
+    std::cout << "\n";
+}*/
+
+void Arena::print_state() {
+    std::cout << board.render() << "\n";
+
+    for (size_t i = 0; i < robots.size(); ++i) {
+        auto& e = robots[i];
+        RobotBase* r = e.instance.get();
+
+        std::cout << "R" << e.glyph << " (" << e.row << "," << e.col << ") "
+                  << "Name: " << e.name << ' ';
+
+        if (r) {
+            std::cout << "Health: " << r->get_health()
+                      << " Armor: " << r->get_armor();
+        } else {
+            std::cout << "Health: N/A Armor: N/A";
+        }
+
+        if (!e.alive) {
+            std::cout << " - is out";
+        }
+        std::cout << "\n";
+
+        if (e.alive && r) {
+            if (!e.lastRadarLog.empty()) std::cout << "  " << e.lastRadarLog << "\n";
+            if (!e.lastShotLog.empty())  std::cout << "  " << e.lastShotLog << "\n";
+            if (!e.lastMoveLog.empty())  std::cout << "  " << e.lastMoveLog << "\n";
+            std::cout << "\n";
+        }
+    }
+
     std::cout << "\n";
 }
 
@@ -164,6 +226,99 @@ std::vector<RadarObj> Arena::perform_radar(int robotIdx, int radarDirection) {
 }
 
 void Arena::handle_shot(int shooterIdx, int shotRow, int shotCol) {
+    // Validate shooter index
+    if (shooterIdx < 0 || shooterIdx >= static_cast<int>(robots.size())) return;
+
+    RobotEntry& shooterEntry = robots[shooterIdx];
+    RobotBase* shooter = shooterEntry.instance.get();
+
+    // Shooter must be alive and have a valid instance
+    if (!shooterEntry.alive || shooter == nullptr) return;
+
+    // Ensure shot coordinates are in bounds before any logic that relies on them
+    if (!board.in_bounds(shotRow, shotCol)) {
+        std::cout << "Robot " << shooterEntry.glyph
+                  << " attempted an out-of-bounds shot at (" << shotRow << "," << shotCol << ")\n";
+        return;
+    }
+
+    std::cout << "Robot " << shooterEntry.glyph
+              << " fired a shot at (" << shotRow << "," << shotCol << ")\n";
+
+    // Weapon query (safe: shooter != nullptr above)
+    WeaponType w = shooter->get_weapon();
+
+    for (size_t i = 0; i < robots.size(); ++i) {
+        RobotEntry& e = robots[i];
+        RobotBase* target = e.instance.get();
+
+        // Skip dead or missing instances
+        if (!e.alive || target == nullptr) continue;
+
+        bool hit = false;
+
+        switch (w) {
+            case WeaponType::railgun:
+                // Line attack: same row or col
+                hit = (e.row == shotRow || e.col == shotCol);
+                break;
+
+            case WeaponType::hammer:
+            case WeaponType::grenade:
+            case WeaponType::flamethrower:
+                // 3x3 AoE centered on shot
+                hit = (std::abs(e.row - shotRow) <= 1 && std::abs(e.col - shotCol) <= 1);
+                break;
+
+            default:
+                // Fist or unknown: direct cell only
+                hit = (e.row == shotRow && e.col == shotCol);
+                break;
+        }
+
+        // Optional: prevent self-hit if your design requires it
+        // if (static_cast<int>(i) == shooterIdx) hit = false;
+
+        if (!hit) continue;
+
+        std::cout << "Robot " << shooterEntry.glyph
+                  << " hit Robot " << e.glyph
+                  << " at (" << e.row << "," << e.col << ")\n";
+
+        // Null-safe stat reads and calculations
+        int armor = target->get_armor();           // target != nullptr ensured
+        int raw = 10;                              // placeholder damage
+        double reduction = 0.1 * static_cast<double>(armor);
+        int dealt = std::max(0, static_cast<int>(std::round(raw * (1.0 - reduction))));
+
+        // Apply damage safely
+        target->take_damage(dealt);
+        target->reduce_armor(1);
+
+        // Recheck health via the valid pointer
+        int health = target->get_health();
+
+        if (health <= 0) {
+            e.alive = false;
+
+            // Only touch the board if coordinates are valid
+            if (board.in_bounds(e.row, e.col)) {
+                board.set_dead(e.row, e.col);
+            } else {
+                std::cout << "Warning: dead robot " << e.glyph
+                          << " has out-of-bounds coords (" << e.row << "," << e.col
+                          << "); skipping board update.\n";
+            }
+
+            std::cout << "Robot " << e.glyph << " has been destroyed!\n";
+
+            // Optional: do NOT reset e.instance here if you still need to print stats later.
+            // e.instance.reset(); // If you choose to free immediately, ensure all later code is null-safe.
+        }
+    }
+}
+
+/*void Arena::handle_shot(int shooterIdx, int shotRow, int shotCol) {
     if (shooterIdx < 0 || shooterIdx >= (int)robots.size()) return;
     if (!robots[shooterIdx].alive || robots[shooterIdx].instance == nullptr) return;
 
@@ -227,7 +382,7 @@ void Arena::handle_shot(int shooterIdx, int shotRow, int shotCol) {
             }
         }
     }
-}
+}*/
 
 void Arena::handle_move(int robotIdx, int moveDir, int distance) {
     auto& e = robots[robotIdx];
@@ -295,14 +450,17 @@ void Arena::run() {
         print_state();
 
         if (check_winner(winner)) {
-            std::cout << "Winner: R" << robots[winner].m_name << robots[winner].glyph
+            std::cout << "Winner: R" << robots[winner].glyph
                       << " at (" << robots[winner].row << "," << robots[winner].col << ")\n";
+                      
             break;
         }
 
         for (size_t i = 0; i < robots.size(); ++i) {
             auto& e = robots[i];
-            if (!e.alive) continue;
+            //if (!e.alive) continue;
+            if (!e.alive || e.instance == nullptr) continue;
+
 
             int radarDir = 0;
             e.instance->get_radar_direction(radarDir);
@@ -326,9 +484,15 @@ void Arena::run() {
             }
         }
     }
-    
+
 
     // Cleanup loaded shared libs
+    // First destroy robot instances
+    for (size_t i = 0; i < robots.size(); ++i) {
+        robots[i].instance.reset();
+    }
+
+    // Then close dynamic libraries
     for (void* h : dl_handles) {
         if (h) dlclose(h);
     }

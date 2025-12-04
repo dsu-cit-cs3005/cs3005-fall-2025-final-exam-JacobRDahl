@@ -6,7 +6,7 @@
 
 struct RobotEntry {
     std::unique_ptr<RobotBase> instance;
-    std::string m_name; // from print_stats or set later
+    std::string name; // from print_stats or set later
     char glyph = '?'; // character to display, e.g., '@', '$'
     int row = -1;
     int col = -1;
@@ -21,15 +21,19 @@ struct RobotEntry {
 
 class RobotList {
 public:
+
     // Add a robot (takes ownership)
-    int add(std::unique_ptr<RobotBase> rb, char glyph) {
-        RobotEntry e;
-        e.instance = std::move(rb);
-        e.glyph = glyph;
-        e.alive = true;
-        entries.push_back(std::move(e));
-        return static_cast<int>(entries.size() - 1);
-    }
+    int add(std::unique_ptr<RobotBase> rb, char glyph, const std::string& robotName) {
+    RobotEntry e;
+    e.instance = std::move(rb);
+    e.glyph = glyph;
+    e.name = robotName;   // store Arena-side name
+    e.alive = true;
+
+    entries.push_back(std::move(e));
+    return static_cast<int>(entries.size() - 1);
+}
+
 
     size_t size() const { return entries.size(); }
 

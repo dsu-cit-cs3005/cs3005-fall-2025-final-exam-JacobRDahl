@@ -57,6 +57,7 @@ private:
     bool has_adjacent_target = false;
     int target_row = 0;
     int target_col = 0;
+    
 };
 
 // Factory function
